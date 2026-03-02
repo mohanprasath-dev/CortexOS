@@ -1,0 +1,82 @@
+%% CortexOS – System Architecture Diagram
+%% Real-Time Multimodal Autonomous Workspace Agent
+%% Auth: Vertex AI with OAuth2 Bearer Tokens (Application Default Credentials)
+%% No API keys in any path.
+
+graph TB
+    subgraph Frontend["🖥️ Frontend (React + Vite)"]
+        MIC["🎤 Microphone\n(WebRTC Audio)"]
+        SCREEN["🖥️ Screen Capture\n(getDisplayMedia)"]
+        UI["📊 Agent UI\n(Action Trace + Demo Mode)"]
+        EB["⚠️ ErrorBoundary"]
+        WS_CLIENT["🔌 WebSocket Client\n(auto-reconnect)"]
+        
+        MIC -->|"PCM16 16kHz\naudio chunks"| WS_CLIENT
+        SCREEN -->|"JPEG frames\nevery 2.5s"| WS_CLIENT
+        WS_CLIENT -->|"Text, tool traces,\naudio responses"| UI
+        EB --> UI
+    end
+
+    subgraph Backend["⚡ Backend (Node.js + Express)"]
+        SERVER["🖧 Express Server\n+ WebSocket Server\n(backpressure guard)"]
+        GEMINI["🧠 Gemini Live Client\n(Vertex AI BidiGenerateContent)\nOAuth2 Bearer Token"]
+        EXECUTOR["⚙️ Tool Executor\n(Validation + Retry + Profiling)"]
+        MEMORY["📝 Session Memory\n(Action Log, 500 cap)"]
+        RATE["🛡️ Rate Limiter\n(30 actions/min)"]
+        
+        SERVER -->|"Audio + Image\nstreams"| GEMINI
+        GEMINI -->|"Tool calls\n(structured JSON)"| EXECUTOR
+        EXECUTOR -->|"Execution\nresults"| GEMINI
+        GEMINI -->|"Text + Audio\nresponses"| SERVER
+        SERVER --> MEMORY
+        EXECUTOR --> MEMORY
+        SERVER --> RATE
+    end
+
+    subgraph Browser["🌐 Playwright Sandbox"]
+        PW["🎭 Playwright Controller"]
+        CHROMIUM["Chromium Browser\n(Headless, sandboxed)"]
+        SHARP["📸 Sharp\n(JPEG compress + resize)"]
+        
+        PW -->|"navigate, click,\ntype, extract"| CHROMIUM
+        CHROMIUM -->|"Screenshots\n(PNG)"| SHARP
+        SHARP -->|"Compressed JPEG\n(≤1024px, 60% quality)"| PW
+    end
+
+    subgraph Cloud["☁️ Google Cloud"]
+        ADC["🔐 Application Default\nCredentials (ADC)"]
+        VERTEX["Vertex AI\nGemini 2.0 Flash Live\n(BidiGenerateContent)"]
+        CLOUDRUN["Cloud Run\n(Container, non-root)"]
+        
+        ADC -->|"OAuth2 Bearer\nToken"| VERTEX
+    end
+
+    subgraph Tools["🛠️ Tool Schema (6 tools)"]
+        T1["navigate(url)"]
+        T2["click(selector)"]
+        T3["type(selector, text)"]
+        T4["extract(selector)"]
+        T5["summarize(text)"]
+        T6["create_calendar_event\n(date, time, title)"]
+    end
+
+    %% Cross-subgraph connections
+    WS_CLIENT <-->|"WebSocket\nbidirectional"| SERVER
+    EXECUTOR -->|"Browser\nactions"| PW
+    PW -->|"Screenshots"| GEMINI
+    GEMINI <-->|"Streaming\nWebSocket\n(Bearer token)"| VERTEX
+    Backend -->|"Deployed on"| CLOUDRUN
+    EXECUTOR -.->|"dispatches"| Tools
+
+    %% Styling
+    classDef frontend fill:#1e1b4b,stroke:#6366f1,color:#e0e0ff
+    classDef backend fill:#1a1a2e,stroke:#8b5cf6,color:#e0e0ff
+    classDef browser fill:#0d2818,stroke:#10b981,color:#d0ffd0
+    classDef cloud fill:#1e1a0d,stroke:#f59e0b,color:#fff0d0
+    classDef tools fill:#1a0d0d,stroke:#ef4444,color:#ffd0d0
+
+    class Frontend frontend
+    class Backend backend
+    class Browser browser
+    class Cloud cloud
+    class Tools tools
