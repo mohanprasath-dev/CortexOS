@@ -72,7 +72,9 @@ export class PlaywrightController {
     this.page.setDefaultNavigationTimeout(15_000);
     this.page.setDefaultTimeout(10_000);
 
-    // Navigate to a blank start page
+    // Navigate to a blank start page.
+    // NOTE: `about:` URLs are blocked by ComplianceGuard for user-facing tool calls,
+    // but this internal initialization bypasses tool dispatch intentionally.
     await this.page.goto('about:blank');
 
     this.initialized = true;
@@ -233,11 +235,11 @@ export class PlaywrightController {
    */
   async close(): Promise<void> {
     if (this.context) {
-      await this.context.close().catch(() => {});
+      await this.context.close().catch(() => { });
       this.context = null;
     }
     if (this.browser) {
-      await this.browser.close().catch(() => {});
+      await this.browser.close().catch(() => { });
       this.browser = null;
     }
     this.page = null;

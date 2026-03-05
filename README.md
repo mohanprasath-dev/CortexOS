@@ -39,6 +39,7 @@ Frontend (React)          Backend (Node.js)              Google Cloud
 ```
 
 See [architecture.mmd](architecture.mmd) for the full Mermaid diagram.
+> **Tip:** You can render it with the [Mermaid Live Editor](https://mermaid.live) or any Mermaid-compatible viewer.
 
 ### Data Flow
 
@@ -169,7 +170,6 @@ LOCATION=us-central1
 GEMINI_MODEL_NAME=gemini-2.0-flash-live-001
 GOOGLE_APPLICATION_CREDENTIALS=./service-account-key.json
 PORT=8080
-WS_PORT=8081
 ```
 
 ### 5. Install Dependencies
@@ -243,8 +243,7 @@ gcloud run deploy cortexos \
 | `LOCATION` | Vertex AI region (e.g., `us-central1`) | Yes |
 | `GEMINI_MODEL_NAME` | Model name (e.g., `gemini-2.0-flash-live-001`) | Yes |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to service account key | Yes (local) |
-| `PORT` | HTTP server port | No (default: 8080) |
-| `WS_PORT` | WebSocket server port | No (default: 8081) |
+| `PORT` | HTTP + WebSocket server port | No (default: 8080) |
 
 > **Note:** On Cloud Run, authentication is handled automatically via the service account attached to the Cloud Run service. You don't need `GOOGLE_APPLICATION_CREDENTIALS` in production.
 

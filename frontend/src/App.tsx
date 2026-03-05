@@ -238,7 +238,7 @@ const App: React.FC = () => {
 
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  const playAudioResponse = (base64Audio?: string) => {
+  const playAudioResponse = useCallback((base64Audio?: string) => {
     if (!base64Audio) return;
     try {
       if (!audioContextRef.current) {
@@ -265,7 +265,7 @@ const App: React.FC = () => {
     } catch (err) {
       console.error('Audio playback error:', err);
     }
-  };
+  }, []);
 
   // ── Connect / Disconnect ───────────────────────────────────────────────
 
@@ -276,7 +276,8 @@ const App: React.FC = () => {
     setCaptureCount(0);
     addTrace({ type: 'system', content: 'Connecting to CortexOS backend...' });
 
-    const wsUrl = `ws://${window.location.hostname}:8081`;
+    const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${wsProto}://${window.location.host}/ws`;
     const client = createWebSocketClient(wsUrl);
 
     client.onOpen = () => {
@@ -411,7 +412,11 @@ const App: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {/* Demo Mode Toggle */}
           <button
-            onClick={() => setDemoMode((prev) => !prev)}
+            onClick={() => {
+              const next = !demoMode;
+              setDemoMode(next);
+              wsClientRef.current?.send({ type: 'set_demo_mode', data: String(next) });
+            }}
             style={{
               padding: '4px 12px',
               borderRadius: '20px',

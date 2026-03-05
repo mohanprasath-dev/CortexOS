@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
-    "lint": "eslint src/**/*.ts"
+    "start": "node dist/server.js"
   },
   "dependencies": {
     "@google-cloud/vertexai": "^1.9.0",

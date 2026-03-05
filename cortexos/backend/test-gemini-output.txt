@@ -1,8 +1,0 @@
-﻿=== Gemini Live API Test ===
-URL: wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent
-Model path: projects/notional-cirrus-458606-e0/locations/us-central1/publishers/google/models/gemini-2.0-flash-live-001
-Token length: 1024
-
-[OPEN] WebSocket connected, sending setup...
-
-[CLOSE] Code: 1008 | Reason: Publisher Model `projects/notional-cirrus-458606-e0/locations/us-central1/publishers/google/models/gemini-2.0-flash-live-00

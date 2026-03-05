@@ -24,7 +24,6 @@ export interface ValidatedConfig {
   location: string;
   modelName: string;
   port: number;
-  wsPort: number;
   hasCredentials: boolean;
 }
 
@@ -130,15 +129,8 @@ export function validateConfig(): ConfigValidationResult {
 
   // ── Ports ──────────────────────────────────────────────────────────────
   const port = parseInt(process.env.PORT || '8080', 10);
-  const wsPort = parseInt(process.env.WS_PORT || '8081', 10);
   if (isNaN(port) || port < 1 || port > 65535) {
     errors.push(`Invalid PORT: ${process.env.PORT}. Must be 1-65535.`);
-  }
-  if (isNaN(wsPort) || wsPort < 1 || wsPort > 65535) {
-    errors.push(`Invalid WS_PORT: ${process.env.WS_PORT}. Must be 1-65535.`);
-  }
-  if (port === wsPort) {
-    errors.push(`PORT (${port}) and WS_PORT (${wsPort}) cannot be the same.`);
   }
 
   // ── Guard: No API keys present ─────────────────────────────────────────
@@ -153,7 +145,7 @@ export function validateConfig(): ConfigValidationResult {
     valid: errors.length === 0,
     errors,
     warnings,
-    config: { projectId, location, modelName, port, wsPort, hasCredentials },
+    config: { projectId, location, modelName, port, hasCredentials },
   };
 
   // ── Log validation results ─────────────────────────────────────────────

@@ -1,13 +1,16 @@
 /**
- * CortexOS – Microphone Streamer
+ * CortexOS – Microphone Streamer (AudioWorklet)
  *
  * Captures live audio from the user's microphone using the Web Audio API,
  * processes it into 16kHz PCM16 mono format suitable for the Gemini Live API,
  * and streams base64-encoded audio chunks to the backend via WebSocket.
  *
+ * Uses AudioWorkletNode (replacing the deprecated ScriptProcessorNode)
+ * for reliable, main-thread-unblocking audio processing.
+ *
  * Audio processing pipeline:
  * 1. getUserMedia captures raw microphone audio (browser default sample rate)
- * 2. AudioWorklet or ScriptProcessor downsamples to 16kHz
+ * 2. AudioWorklet downsamples to 16kHz
  * 3. Float32 samples are converted to PCM16 (Int16)
  * 4. PCM16 buffer is base64-encoded
  * 5. Chunks are sent via the provided callback
@@ -16,13 +19,40 @@
 // Target sample rate for Gemini Live API
 const TARGET_SAMPLE_RATE = 16000;
 
-// Buffer size for audio processing (in samples at target rate)
-const BUFFER_SIZE = 4096;
+// AudioWorklet processor code (inlined as a Blob URL)
+const WORKLET_CODE = `
+class PCM16Processor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._buffer = [];
+    this._bufferSize = 4096;
+  }
+
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+
+    const channelData = input[0];
+    for (let i = 0; i < channelData.length; i++) {
+      this._buffer.push(channelData[i]);
+    }
+
+    if (this._buffer.length >= this._bufferSize) {
+      const chunk = this._buffer.splice(0, this._bufferSize);
+      this.port.postMessage({ type: 'audio', data: new Float32Array(chunk) });
+    }
+
+    return true;
+  }
+}
+
+registerProcessor('pcm16-processor', PCM16Processor);
+`;
 
 export class MicrophoneStreamer {
   private stream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
-  private processor: ScriptProcessorNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private onChunk: (base64Audio: string) => void;
   private active = false;
@@ -52,24 +82,29 @@ export class MicrophoneStreamer {
       video: false,
     });
 
-    // Create audio context at OS sample rate (we'll downsample manually)
+    // Create audio context at OS sample rate (we'll downsample in the worklet message handler)
     this.audioContext = new AudioContext();
     const nativeSampleRate = this.audioContext.sampleRate;
+
+    // Register the AudioWorklet processor from an inline Blob
+    const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+    const workletUrl = URL.createObjectURL(blob);
+    await this.audioContext.audioWorklet.addModule(workletUrl);
+    URL.revokeObjectURL(workletUrl);
 
     // Create audio source from microphone stream
     this.source = this.audioContext.createMediaStreamSource(this.stream);
 
-    // Use ScriptProcessorNode for broad compatibility
-    // (AudioWorklet would be preferred for production but requires more setup)
-    this.processor = this.audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
+    // Create AudioWorkletNode
+    this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm16-processor');
 
     // Downsample ratio
     const downsampleRatio = nativeSampleRate / TARGET_SAMPLE_RATE;
 
-    this.processor.onaudioprocess = (event: AudioProcessingEvent) => {
+    this.workletNode.port.onmessage = (event: MessageEvent) => {
       if (!this.active) return;
 
-      const inputData = event.inputBuffer.getChannelData(0);
+      const inputData: Float32Array = event.data.data;
 
       // Downsample from native rate to 16kHz
       const outputLength = Math.floor(inputData.length / downsampleRatio);
@@ -87,9 +122,9 @@ export class MicrophoneStreamer {
       this.onChunk(base64);
     };
 
-    // Connect: source → processor → destination (required for ScriptProcessor to work)
-    this.source.connect(this.processor);
-    this.processor.connect(this.audioContext.destination);
+    // Connect: source → workletNode
+    this.source.connect(this.workletNode);
+    // AudioWorkletNode does not need to be connected to destination for processing
 
     this.active = true;
     console.log(
@@ -103,9 +138,9 @@ export class MicrophoneStreamer {
   stop(): void {
     this.active = false;
 
-    if (this.processor) {
-      this.processor.disconnect();
-      this.processor = null;
+    if (this.workletNode) {
+      this.workletNode.disconnect();
+      this.workletNode = null;
     }
 
     if (this.source) {

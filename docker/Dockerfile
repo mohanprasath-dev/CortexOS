@@ -109,12 +109,10 @@ WORKDIR /app/backend
 
 ENV NODE_ENV=production
 ENV PORT=8080
-ENV WS_PORT=8081
 ENV BROWSER_HEADLESS=true
 
 # Cloud Run uses PORT env var
 EXPOSE 8080
-EXPOSE 8081
 
 # ── Health Check ─────────────────────────────────────────────────────────────
 

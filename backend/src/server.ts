@@ -49,7 +49,6 @@ process.on('uncaughtException', (err) => {
 // ── Configuration ────────────────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
-const WS_PORT = parseInt(process.env.WS_PORT || '8081', 10);
 const SCREEN_CAPTURE_INTERVAL = parseInt(process.env.SCREEN_CAPTURE_INTERVAL_MS || '2500', 10);
 const MAX_ACTIONS_PER_MINUTE = parseInt(process.env.MAX_ACTIONS_PER_MINUTE || '30', 10);
 
@@ -155,10 +154,10 @@ function recordAction(session: ActiveSession): void {
 
 // ── WebSocket Server ─────────────────────────────────────────────────────────
 
-const wss = new WebSocketServer({ port: WS_PORT });
+const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 wss.on('listening', () => {
-  logger.info(`WebSocket server listening on port ${WS_PORT}`);
+  logger.info(`WebSocket server listening on port ${PORT} at /ws`);
 });
 
 wss.on('connection', async (ws: WebSocket) => {
@@ -227,7 +226,7 @@ wss.on('connection', async (ws: WebSocket) => {
         const errorMsg = 'Rate limit exceeded: too many actions per minute';
         logger.warn(`${errorMsg}: session=${sessionId}`);
         sendToClient(ws, { type: 'error', error: errorMsg });
-        await geminiClient!.sendToolResult(toolCall.name, { error: errorMsg }).catch(() => {});
+        await geminiClient!.sendToolResult(toolCall.name, { error: errorMsg }).catch(() => { });
         return;
       }
 
@@ -243,7 +242,7 @@ wss.on('connection', async (ws: WebSocket) => {
           result: { error: errorMsg },
           status: 'blocked',
         });
-        await geminiClient!.sendToolResult(toolCall.name, { error: errorMsg }).catch(() => {});
+        await geminiClient!.sendToolResult(toolCall.name, { error: errorMsg }).catch(() => { });
         return;
       }
 
@@ -304,7 +303,7 @@ wss.on('connection', async (ws: WebSocket) => {
         });
 
         // Inform Gemini of the failure so it can retry or adapt
-        await geminiClient!.sendToolResult(toolCall.name, { error: errorMessage }).catch(() => {});
+        await geminiClient!.sendToolResult(toolCall.name, { error: errorMessage }).catch(() => { });
       }
     });
 
@@ -320,7 +319,7 @@ wss.on('connection', async (ws: WebSocket) => {
       sendToClient(ws, {
         type: 'error',
         error: `Gemini connection permanently lost: ${info.reason} (code ${info.code}). ` +
-               'Check model name, credentials, and project configuration.',
+          'Check model name, credentials, and project configuration.',
       });
     });
 
@@ -370,8 +369,8 @@ wss.on('connection', async (ws: WebSocket) => {
     sendToClient(ws, { type: 'error', error: errMsg });
 
     // Cleanup partial initialization
-    if (playwrightCtrl) await playwrightCtrl.close().catch(() => {});
-    if (geminiClient) await geminiClient.disconnect().catch(() => {});
+    if (playwrightCtrl) await playwrightCtrl.close().catch(() => { });
+    if (geminiClient) await geminiClient.disconnect().catch(() => { });
     ws.close();
   }
 });
@@ -516,8 +515,7 @@ process.on('SIGTERM', shutdown);
 // ── Start Servers ────────────────────────────────────────────────────────────
 
 httpServer.listen(PORT, () => {
-  logger.info(`CortexOS HTTP server running on port ${PORT}`);
-  logger.info(`CortexOS WebSocket server running on port ${WS_PORT}`);
+  logger.info(`CortexOS server running on port ${PORT} (HTTP + WebSocket at /ws)`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 

@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+
+# Credentials – NEVER commit
+service-account-key.json
+**/service-account-key*.json
+
+# Debug / test output
+test-output.txt
+test-gemini-output.txt
+gemini-diag.log

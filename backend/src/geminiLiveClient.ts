@@ -11,8 +11,11 @@
  *   Gemini → Client: setupComplete, text parts, audio parts, tool-call requests,
  *                     turnComplete
  *
- * Token lifecycle: tokens are fetched once on connect() and refreshed
- * automatically 60 s before expiry via a recurring timer.
+ * Token lifecycle: tokens are fetched once on connect(). Since WebSocket
+ * headers cannot be updated after the connection is established, token
+ * refresh is not possible mid-session. Sessions are therefore capped at
+ * the OAuth2 token lifetime (~60 minutes). Callers should reconnect for
+ * longer-running sessions.
  */
 
 import { EventEmitter } from 'events';
@@ -95,7 +98,6 @@ export class GeminiLiveClient extends EventEmitter {
   // OAuth2 token management
   private auth: GoogleAuth;
   private accessToken: string | null = null;
-  private tokenRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(sessionId: string) {
     super();
@@ -143,7 +145,6 @@ export class GeminiLiveClient extends EventEmitter {
 
     // Obtain a fresh access token
     this.accessToken = await this.fetchAccessToken();
-    this.startTokenRefresh();
 
     const wsUrl = this.buildWebSocketUrl();
     logger.info(
@@ -152,13 +153,23 @@ export class GeminiLiveClient extends EventEmitter {
     );
 
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
+
+      const settle = (action: 'resolve' | 'reject', value?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(connectionTimeout);
+        if (action === 'resolve') resolve();
+        else reject(value);
+      };
+
       this.ws = new WebSocket(wsUrl, {
         headers: { Authorization: `Bearer ${this.accessToken}` },
       });
 
       const connectionTimeout = setTimeout(() => {
         if (!this.connected) {
-          reject(new Error('Gemini connection timeout after 15 s'));
+          settle('reject', new Error('Gemini connection timeout after 15 s'));
           this.ws?.close();
         }
       }, 15_000);
@@ -180,12 +191,11 @@ export class GeminiLiveClient extends EventEmitter {
               `Gemini API error: session=${this.sessionId}, ` +
               `code=${message.error.code}, msg=${message.error.message}`
             );
-            clearTimeout(connectionTimeout);
-            reject(new Error(`Gemini error: ${message.error.message}`));
+            settle('reject', new Error(`Gemini error: ${message.error.message}`));
             return;
           }
 
-          this.handleServerMessage(message, resolve, connectionTimeout);
+          this.handleServerMessage(message, () => settle('resolve'), connectionTimeout);
         } catch (err) {
           logger.error(`Failed to parse Gemini message: session=${this.sessionId}`, err);
         }
@@ -193,10 +203,7 @@ export class GeminiLiveClient extends EventEmitter {
 
       this.ws.on('error', (err) => {
         logger.error(`Gemini WebSocket error: session=${this.sessionId}`, err);
-        clearTimeout(connectionTimeout);
-        if (!this.connected) {
-          reject(err);
-        }
+        settle('reject', err instanceof Error ? err : new Error(String(err)));
         this.emit('error', err);
       });
 
@@ -230,12 +237,12 @@ export class GeminiLiveClient extends EventEmitter {
 
         const wasConnected = this.connected;
         this.connected = false;
-        clearTimeout(connectionTimeout);
 
         if (!wasConnected && code !== 1000) {
-          reject(new Error(`WebSocket closed: ${code} – ${codeDesc} – ${reasonStr}`));
+          settle('reject', new Error(`WebSocket closed: ${code} – ${codeDesc} – ${reasonStr}`));
         }
 
+        // Reconnect attempts use independent promises (no double-rejection)
         if (this.reconnectAttempts < this.maxReconnectAttempts && code !== 1000) {
           this.reconnectAttempts++;
           const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 8000);
@@ -351,7 +358,6 @@ export class GeminiLiveClient extends EventEmitter {
   async disconnect(): Promise<void> {
     this.maxReconnectAttempts = 0;
     this.connected = false;
-    this.stopTokenRefresh();
 
     if (this.ws) {
       this.ws.close(1000, 'Session ended');
@@ -467,31 +473,6 @@ export class GeminiLiveClient extends EventEmitter {
 
     logger.info(`OAuth2 token acquired: session=${this.sessionId}, latency=${Date.now() - t0}ms`);
     return token;
-  }
-
-  /**
-   * Refresh the access token every 50 minutes (tokens expire after 60 min).
-   */
-  private startTokenRefresh(): void {
-    this.stopTokenRefresh();
-    const REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
-    this.tokenRefreshTimer = setInterval(async () => {
-      try {
-        this.accessToken = await this.fetchAccessToken();
-        logger.info(`OAuth2 token refreshed: session=${this.sessionId}`);
-      } catch (err) {
-        logger.error(`Token refresh failed: session=${this.sessionId}`, err);
-        this.emit('error', err instanceof Error ? err : new Error(String(err)));
-      }
-    }, REFRESH_INTERVAL_MS);
-  }
-
-  /** Stop the token refresh timer. */
-  private stopTokenRefresh(): void {
-    if (this.tokenRefreshTimer) {
-      clearInterval(this.tokenRefreshTimer);
-      this.tokenRefreshTimer = null;
-    }
   }
 
   // ── Private: Helpers ───────────────────────────────────────────────────

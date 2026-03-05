@@ -24,29 +24,16 @@ export interface ToolResult {
   timestamp: string;
 }
 
-// ── Safety Filters ───────────────────────────────────────────────────────────
+// Safety filtering is centralized in ComplianceGuard — no duplicate checks here.
 
-const BLOCKED_URL_PATTERNS = [
-  /^file:\/\//i,
-  /^javascript:/i,
-  /^data:text\/html/i,
-  /chrome:\/\//i,
-  /about:/i,
-];
+// ── Runtime Type Guard ───────────────────────────────────────────────────────
 
-const BLOCKED_CONTENT_PATTERNS = [
-  /medical\s+diagnosis/i,
-  /legal\s+advice/i,
-  /prescription/i,
-  /dosage/i,
-];
-
-function isSafeUrl(url: string): boolean {
-  return !BLOCKED_URL_PATTERNS.some((pattern) => pattern.test(url));
-}
-
-function isSafeContent(text: string): boolean {
-  return !BLOCKED_CONTENT_PATTERNS.some((pattern) => pattern.test(text));
+function requireString(args: Record<string, unknown>, key: string): string {
+  const value = args[key];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Missing or invalid argument: "${key}" must be a non-empty string`);
+  }
+  return value;
 }
 
 // ── Tool Executor ────────────────────────────────────────────────────────────
@@ -117,25 +104,25 @@ export class ToolExecutor {
   private async dispatch(toolName: ToolName, args: Record<string, unknown>): Promise<unknown> {
     switch (toolName) {
       case ToolName.NAVIGATE:
-        return this.handleNavigate(args.url as string);
+        return this.handleNavigate(requireString(args, 'url'));
 
       case ToolName.CLICK:
-        return this.handleClick(args.selector as string);
+        return this.handleClick(requireString(args, 'selector'));
 
       case ToolName.TYPE:
-        return this.handleType(args.selector as string, args.text as string);
+        return this.handleType(requireString(args, 'selector'), requireString(args, 'text'));
 
       case ToolName.EXTRACT:
-        return this.handleExtract(args.selector as string);
+        return this.handleExtract(requireString(args, 'selector'));
 
       case ToolName.SUMMARIZE:
-        return this.handleSummarize(args.text as string);
+        return this.handleSummarize(requireString(args, 'text'));
 
       case ToolName.CREATE_CALENDAR_EVENT:
         return this.handleCreateCalendarEvent(
-          args.date as string,
-          args.time as string,
-          args.title as string
+          requireString(args, 'date'),
+          requireString(args, 'time'),
+          requireString(args, 'title')
         );
 
       default:
@@ -146,9 +133,7 @@ export class ToolExecutor {
   // ── Tool Handlers ────────────────────────────────────────────────────────
 
   private async handleNavigate(url: string): Promise<{ url: string; title: string }> {
-    if (!isSafeUrl(url)) {
-      throw new Error(`Blocked URL for safety: ${url}`);
-    }
+    // URL safety is enforced by ComplianceGuard before dispatch
 
     // Ensure URL has a protocol
     const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
@@ -170,9 +155,7 @@ export class ToolExecutor {
     selector: string,
     text: string
   ): Promise<{ selector: string; typed: boolean; length: number }> {
-    if (!isSafeContent(text)) {
-      throw new Error('Content blocked by safety filter');
-    }
+    // Content safety is enforced by ComplianceGuard before dispatch
 
     await this.playwright.type(selector, text);
     logger.info(`Typed into: ${selector}, length: ${text.length}`);
@@ -214,15 +197,22 @@ export class ToolExecutor {
       throw new Error(`Invalid time format: ${time}. Expected HH:MM`);
     }
 
+    // Calculate end time (1 hour after start)
+    const [hours, minutes] = time.split(':').map(Number);
+    const endHours = String((hours + 1) % 24).padStart(2, '0');
+    const endTime = `${endHours}:${String(minutes).padStart(2, '0')}`;
+
     // Navigate to Google Calendar with pre-filled event
-    const calendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${date.replace(/-/g, '')}T${time.replace(':', '')}00/${date.replace(/-/g, '')}T${time.replace(':', '')}00`;
+    const startDt = `${date.replace(/-/g, '')}T${time.replace(':', '')}00`;
+    const endDt = `${date.replace(/-/g, '')}T${endTime.replace(':', '')}00`;
+    const calendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startDt}/${endDt}`;
 
     await this.playwright.navigate(calendarUrl);
 
     // Wait for the page to load
     await this.sleep(2000);
 
-    logger.info(`Calendar event creation initiated: ${title} on ${date} at ${time}`);
+    logger.info(`Calendar event creation initiated: ${title} on ${date} at ${time}-${endTime}`);
     return { date, time, title, created: true };
   }
 
