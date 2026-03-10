@@ -35,6 +35,8 @@ export enum ToolName {
   EXTRACT = 'extract',
   SUMMARIZE = 'summarize',
   CREATE_CALENDAR_EVENT = 'create_calendar_event',
+  SCROLL = 'scroll',
+  WAIT_FOR_ELEMENT = 'wait_for_element',
 }
 
 // ── Tool Declarations ────────────────────────────────────────────────────────
@@ -152,6 +154,49 @@ export const TOOL_DECLARATIONS: ToolDeclaration[] = [
         },
       },
       required: ['date', 'time', 'title'],
+    },
+  },
+  {
+    name: ToolName.SCROLL,
+    description:
+      'Scroll the browser page up or down by a specified amount. Use this to ' +
+      'reveal content below or above the current viewport, such as reading long ' +
+      'articles, finding buttons further down the page, or scrolling back to the top.',
+    parameters: {
+      type: 'object',
+      properties: {
+        direction: {
+          type: 'string',
+          description: 'Direction to scroll: "up" or "down"',
+          enum: ['up', 'down'],
+        },
+        amount: {
+          type: 'string',
+          description: 'Number of pixels to scroll (default: 300)',
+        },
+      },
+      required: ['direction'],
+    },
+  },
+  {
+    name: ToolName.WAIT_FOR_ELEMENT,
+    description:
+      'Wait for a specific element to appear on the page. Use this when you expect ' +
+      'content to load dynamically (e.g., after a navigation, AJAX call, or animation). ' +
+      'Returns true if the element appeared within the timeout, false otherwise.',
+    parameters: {
+      type: 'object',
+      properties: {
+        selector: {
+          type: 'string',
+          description: 'CSS selector of the element to wait for',
+        },
+        timeout: {
+          type: 'string',
+          description: 'Maximum time to wait in milliseconds (default: 5000)',
+        },
+      },
+      required: ['selector'],
     },
   },
 ];

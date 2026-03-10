@@ -12,6 +12,7 @@
 import { logger } from './logger';
 import { PlaywrightController } from './playwrightController';
 import { ToolName, isValidToolName, validateToolArgs } from './toolSchema';
+import { VertexAI } from '@google-cloud/vertexai';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -125,6 +126,18 @@ export class ToolExecutor {
           requireString(args, 'title')
         );
 
+      case ToolName.SCROLL:
+        return this.handleScroll(
+          requireString(args, 'direction'),
+          args.amount != null ? parseInt(String(args.amount), 10) : 300
+        );
+
+      case ToolName.WAIT_FOR_ELEMENT:
+        return this.handleWaitForElement(
+          requireString(args, 'selector'),
+          args.timeout != null ? parseInt(String(args.timeout), 10) : 5000
+        );
+
       default:
         throw new Error(`No handler for tool: ${toolName}`);
     }
@@ -174,12 +187,36 @@ export class ToolExecutor {
   }
 
   private async handleSummarize(text: string): Promise<{ summary: string; originalLength: number }> {
-    // This is a "reasoning" tool — Gemini itself produces the summary.
-    // We return the text so Gemini can reason over it.
-    return {
-      summary: `Please summarize the following text:\n\n${text.substring(0, 3000)}`,
-      originalLength: text.length,
-    };
+    const truncatedInput = text.substring(0, 3000);
+
+    // Try using Vertex AI for a real summary
+    const projectId = process.env.PROJECT_ID;
+    const location = process.env.LOCATION || 'us-central1';
+
+    if (projectId && process.env.DEMO_MODE !== 'true') {
+      try {
+        const vertexAI = new VertexAI({ project: projectId, location });
+        const model = vertexAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const result = await model.generateContent(
+          `Summarize the following text concisely in 2-3 sentences:\n\n${truncatedInput}`
+        );
+        const response = result.response;
+        const summary = response.candidates?.[0]?.content?.parts?.[0]?.text
+          || truncatedInput.substring(0, 500) + '...';
+
+        logger.info(`Summarize completed via Vertex AI: ${summary.length} chars`);
+        return { summary, originalLength: text.length };
+      } catch (err) {
+        logger.warn(`Vertex AI summarize failed, using fallback: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // Fallback: extract first 500 chars as a basic summary
+    const fallbackSummary = truncatedInput.length > 500
+      ? truncatedInput.substring(0, 500) + '... [truncated — Vertex AI unavailable]'
+      : truncatedInput;
+
+    return { summary: fallbackSummary, originalLength: text.length };
   }
 
   private async handleCreateCalendarEvent(
@@ -258,5 +295,28 @@ export class ToolExecutor {
    */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // ── New Tool Handlers (scroll, wait_for_element) ─────────────────────────
+
+  private async handleScroll(
+    direction: string,
+    amount: number
+  ): Promise<{ direction: string; amount: number; scrolled: boolean }> {
+    const dir = direction === 'up' ? 'up' : 'down';
+    const pixels = Math.min(Math.max(amount, 50), 2000);
+    await this.playwright.scroll(dir, pixels);
+    logger.info(`Scrolled ${dir} by ${pixels}px`);
+    return { direction: dir, amount: pixels, scrolled: true };
+  }
+
+  private async handleWaitForElement(
+    selector: string,
+    timeoutMs: number
+  ): Promise<{ selector: string; found: boolean; timeoutMs: number }> {
+    const timeout = Math.min(Math.max(timeoutMs, 500), 15000);
+    const found = await this.playwright.waitForSelector(selector, timeout);
+    logger.info(`Wait for element: ${selector}, found=${found}, timeout=${timeout}ms`);
+    return { selector, found, timeoutMs: timeout };
   }
 }

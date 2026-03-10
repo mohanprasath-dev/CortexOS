@@ -87,8 +87,18 @@ export function validateConfig(): ConfigValidationResult {
 
   // ── Required: PROJECT_ID ───────────────────────────────────────────────
   const projectId = process.env.PROJECT_ID || '';
+  const isDemoMode = process.env.DEMO_MODE === 'true';
+
   if (!projectId) {
-    errors.push('PROJECT_ID is required. Set it in .env or environment.');
+    if (isDemoMode) {
+      warnings.push(
+        'PROJECT_ID is not set, but DEMO_MODE is enabled. ' +
+        'Using mock Gemini client — no real AI capabilities.'
+      );
+    } else {
+      errors.push('PROJECT_ID is required. Set it in .env or environment. ' +
+        'Or set DEMO_MODE=true to run without GCP credentials.');
+    }
   } else if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId)) {
     warnings.push(
       `PROJECT_ID "${projectId}" does not match typical GCP project ID format. ` +

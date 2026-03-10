@@ -15,9 +15,11 @@ import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { GeminiLiveClient } from './geminiLiveClient';
+import { MockGeminiClient } from './mockGeminiClient';
 import { ToolExecutor } from './toolExecutor';
 import { PlaywrightController } from './playwrightController';
 import { SessionMemory } from './sessionMemory';
+import { ScreenshotRelay } from './screenshotRelay';
 import { validateConfigOrDie, ValidatedConfig } from './configValidator';
 import { ComplianceGuard } from './complianceGuard';
 
@@ -51,6 +53,11 @@ process.on('uncaughtException', (err) => {
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const SCREEN_CAPTURE_INTERVAL = parseInt(process.env.SCREEN_CAPTURE_INTERVAL_MS || '2500', 10);
 const MAX_ACTIONS_PER_MINUTE = parseInt(process.env.MAX_ACTIONS_PER_MINUTE || '30', 10);
+const IS_DEMO_MODE = process.env.DEMO_MODE === 'true';
+
+if (IS_DEMO_MODE) {
+  logger.info('═══ DEMO MODE ENABLED ═══ Using MockGeminiClient instead of Vertex AI');
+}
 
 // ── Express App ──────────────────────────────────────────────────────────────
 
@@ -100,6 +107,7 @@ app.get('/api/session/:sessionId', (req, res) => {
     connected: true,
     actionCount: session.memory.getHistory().length,
     createdAt: session.createdAt,
+    demoMode: IS_DEMO_MODE,
   });
 });
 
@@ -111,6 +119,23 @@ app.get('/api/session/:sessionId/history', (req, res) => {
     return;
   }
   res.json({ history: session.memory.getHistory() });
+});
+
+// Screenshot endpoint – returns latest Playwright screenshot as JPEG
+app.get('/api/session/:sessionId/screenshot', (req, res) => {
+  const session = activeSessions.get(req.params.sessionId);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  const buffer = session.screenshotRelay.getLatestFrameBuffer();
+  if (!buffer) {
+    res.status(204).send();
+    return;
+  }
+  res.set('Content-Type', 'image/jpeg');
+  res.set('Cache-Control', 'no-cache');
+  res.send(buffer);
 });
 
 // SPA fallback
@@ -126,11 +151,12 @@ const httpServer = http.createServer(app);
 
 interface ActiveSession {
   ws: WebSocket;
-  gemini: GeminiLiveClient;
+  gemini: GeminiLiveClient | MockGeminiClient;
   toolExecutor: ToolExecutor;
   playwright: PlaywrightController;
   memory: SessionMemory;
   compliance: ComplianceGuard;
+  screenshotRelay: ScreenshotRelay;
   createdAt: string;
   captureInterval: ReturnType<typeof setInterval> | null;
   actionTimestamps: number[];
@@ -165,7 +191,7 @@ wss.on('connection', async (ws: WebSocket) => {
   logger.info(`New WebSocket connection: session=${sessionId}`);
 
   let playwrightCtrl: PlaywrightController | null = null;
-  let geminiClient: GeminiLiveClient | null = null;
+  let geminiClient: GeminiLiveClient | MockGeminiClient | null = null;
 
   try {
     // Initialize Playwright browser
@@ -173,15 +199,23 @@ wss.on('connection', async (ws: WebSocket) => {
     await playwrightCtrl.initialize();
     logger.info(`Playwright browser initialized for session=${sessionId}`);
 
-    // Initialize Gemini Live client
-    geminiClient = new GeminiLiveClient(sessionId);
-    await geminiClient.connect();
-    logger.info(`Gemini Live client connected for session=${sessionId}`);
+    // Initialize Gemini client (real or mock based on DEMO_MODE)
+    if (IS_DEMO_MODE) {
+      geminiClient = new MockGeminiClient(sessionId);
+      await geminiClient.connect();
+      logger.info(`MockGeminiClient connected for session=${sessionId} (DEMO_MODE)`);
+    } else {
+      const realClient = new GeminiLiveClient(sessionId);
+      await realClient.connect();
+      geminiClient = realClient;
+      logger.info(`Gemini Live client connected for session=${sessionId}`);
+    }
 
     // Initialize tool executor with Playwright
     const toolExecutor = new ToolExecutor(playwrightCtrl);
     const memory = new SessionMemory(sessionId);
     const compliance = new ComplianceGuard(false);
+    const screenshotRelay = new ScreenshotRelay();
     compliance.logStartupReport();
 
     const session: ActiveSession = {
@@ -191,10 +225,11 @@ wss.on('connection', async (ws: WebSocket) => {
       playwright: playwrightCtrl,
       memory,
       compliance,
+      screenshotRelay,
       createdAt: new Date().toISOString(),
       captureInterval: null,
       actionTimestamps: [],
-      demoMode: false,
+      demoMode: IS_DEMO_MODE,
     };
 
     activeSessions.set(sessionId, session);
@@ -249,6 +284,7 @@ wss.on('connection', async (ws: WebSocket) => {
       recordAction(session);
 
       // Send tool call trace to frontend
+      sendToClient(ws, { type: 'agent_thinking', thinking: true });
       sendToClient(ws, {
         type: 'tool_call',
         tool: toolCall.name,
@@ -284,6 +320,7 @@ wss.on('connection', async (ws: WebSocket) => {
           result,
           status: 'completed',
         });
+        sendToClient(ws, { type: 'agent_thinking', thinking: false });
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown tool execution error';
         const toolLatency = Date.now() - toolT0;
@@ -304,6 +341,7 @@ wss.on('connection', async (ws: WebSocket) => {
 
         // Inform Gemini of the failure so it can retry or adapt
         await geminiClient!.sendToolResult(toolCall.name, { error: errorMessage }).catch(() => { });
+        sendToClient(ws, { type: 'agent_thinking', thinking: false });
       }
     });
 
@@ -330,8 +368,17 @@ wss.on('connection', async (ws: WebSocket) => {
         if (ws.readyState !== WebSocket.OPEN) return;
         const screenshot = await playwrightCtrl!.captureScreenshot();
         if (screenshot) {
+          const currentUrl = playwrightCtrl!.getCurrentUrl();
+
+          // Store in relay for HTTP endpoint and deduplication
+          session.screenshotRelay.updateFrame(screenshot, currentUrl);
+
+          // Send to Gemini for vision analysis
           await geminiClient!.sendImage(screenshot);
-          sendToClient(ws, { type: 'screen_capture', timestamp: Date.now() });
+
+          // Relay to frontend for live browser view
+          sendToClient(ws, { type: 'browser_frame', frame: screenshot });
+          sendToClient(ws, { type: 'browser_url', url: currentUrl });
         }
       } catch (err) {
         logger.error(`Screen capture error: session=${sessionId}`, err);

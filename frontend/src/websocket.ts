@@ -19,6 +19,11 @@ export interface ServerMessage {
   status?: string;
   error?: string;
   timestamp?: number;
+  // New: browser frame relay
+  frame?: string;
+  url?: string;
+  thinking?: boolean;
+  enabled?: boolean;
 }
 
 export interface ClientMessage {

@@ -135,6 +135,12 @@ export class ComplianceGuard {
       case ToolName.CREATE_CALENDAR_EVENT:
         return this.allow();
 
+      case ToolName.SCROLL:
+        return this.allow();
+
+      case ToolName.WAIT_FOR_ELEMENT:
+        return this.allow();
+
       default:
         return this.allow();
     }
